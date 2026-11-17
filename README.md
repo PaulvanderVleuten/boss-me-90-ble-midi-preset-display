@@ -72,21 +72,22 @@ GPIO 3  -> SEND switch (switches to GND)
 
 ### 1. Initial Setup & Wi-Fi Configuration
 * **Power On:** Turn on the display unit to initialize the main screen interface.
-* **Open Settings:** Tap the **Setup** button on the main screen to navigate to the network configuration menu.
+* **Open Settings:** Tap the **WiFi** symbol at the upper right corner on the main screen to navigate to the network configuration menu.
 
 | Main Display | Wi-Fi Keyboard Interface |
 | :---: | :---: |
 | ![Main Patch Screen](images/patch-display.jpg) | ![Wi-Fi Setup Screen](images/wifi-setup.jpg) |
 
 * **Enter Credentials:** Use the responsive on-screen touch keyboard to type in your local Wi-Fi network name (**SSID**) and network **Password**.
+* **Check:** Press the Check button. If a connection is established, the unit's newly assigned IP Address will appear directly on top of the screen.
 * **Save & Exit:** Press the **OK** button. The system will securely save your settings and automatically return you to the main screen.
-* **Get IP Address:** Once connected, the unit's newly assigned **IP Address** will appear directly on the bottom row of the main screen.
+* **Get IP Address:** Tap the **WiFi** symbol on the main screen. If connected, the unit's assigned **IP Address** will appear directly on top of the network configuration menu.
 
 ### 2. Managing Patches & Customizing Colors via Webserver
-* **Access the Webserver:** Open any web browser on a computer, tablet, or smartphone connected to the same Wi-Fi network and enter the displayed IP address into your URL bar.
+* **Access the Webserver:** Open any web browser on a computer, tablet, or smartphone connected to the same Wi-Fi network and enter the displayed IP address or *patch.local* into your URL bar.
 * **Edit Patch Names:** Use the clean, built-in **ME-90 Patch Manager** web interface to type out full names for your custom guitar patches.
 
-![Web Patch Manager Interface](images/web-interface.jpg)
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ![Web Patch Manager Interface](images/web-interface.jpg)
 
 * **Customize Background Colors:**
   * **On a Computer:** Right-click a patch row to open the system color picker palette.
@@ -94,11 +95,30 @@ GPIO 3  -> SEND switch (switches to GND)
   * *Stage Tip:* Color-code your patches (e.g., light blue for clean, green for rhythm, red for lead solos, yellow for ambient modulations) to instantly recognize your layout under dark stage lighting!
 * **Save Changes:** Click the individual **Save** button next to each patch row to commit changes to the onboard filesystem.
 
+**Note:  There is no WiFi connection needed for normal operation ! Only for editing Patchnames and colors.**  
+
 ### 3. Wireless Performance Mode (MIDI-BLE Only)
 * **Wireless Connection:** Ensure your Boss ME-90 has its official Bluetooth Audio MIDI Dual Adaptor (**BT-DUAL**) active.
 * **Auto-Pairing:** Turn on both devices. The display unit operates **exclusively via MIDI-BLE (Bluetooth Low Energy)** and will automatically scan, pair, and bond directly to your Boss ME-90—no messy physical MIDI cables or hardware input jacks required.
-* **Initial Sync (Important Note):** When powering on the entire setup for the first time, you must step on the ME-90 patch switches to shift to an alternate patch, and then click back to your initial patch. The Boss ME-90 hardware does not natively broadcast a MIDI Program Change (PC) command upon boot up; this initial cycle forces the wireless message to send, synchronizing the display.
-* **Performance Play:** Once synchronized, step on your ME-90 patch switches as normal during live play. The ESP32 unit will instantly intercept the wireless PC messages and refresh the high-visibility TFT screen with your custom patch name and background color.
+* **Initial Sync:** The Display will Sync automatically with the Boss ME-90.By reading the **Sysex messages via NimBLE** upon boot up. This initial cycle reads the wireless messages to synchronize the display.
+* **Performance Play:** Once synchronized, step on your ME-90 patch switches as normal during live play. The ESP32 unit will instantly intercept the wireless PC messages and refresh the high-visibility TFT screen with your custom patch name and background color. **When preselecting a patch (PREV - NEXT)** on the display or button, after **pressing SEND** the **ME-90 will follow**.
+
+## 🛠️ Build Instructions :
+**Flash the board with the included release:  !!!! This only works with the same hardware !!!!**
+I added a release so you can flash the board directly without compiling. At  first boot you
+can calibrate the touchscreen. Once done it will boot up normally.
+Full instructions are in the   How to Flash.PDF   included in the release.
+
+**Or**
+
+**Compile via pioarduino:**
+**Libraries:** Some libraries need to be added via pioarduino home → Libraries, such as:  *ESP32-BLE-MIDI by Maxime (0.4.0) and NimBLE-Arduino by h2zero (2.5.2).
+**Build the Filesystem Image:** Before uploading, ensure all data files are packed into the LittleFS image by running the **Build Filesystem Image** task in pioarduino.
+**Perform a Touch calibration:** At line 89 in the source code, you will find a code block called TOUCH CALIBRATION. Change #define REPEAT_CAL false to #define REPEAT_CAL true. After uploading follow the on-screen instructions. Once calibrated change #define REPEAT_CAL back to  false and upload again. Done.
+
+## 🙏 Acknowledgments:
+A huge thank you to everyone in the PlatformIO and pioarduino communities for building and supporting the open-source ecosystem and tools that make projects like this possible.
+❤️ Special thanks to all the library maintainers and contributors across the open-source community whose hard work, time, and dedication power the MIDI, Bluetooth, and display features in this project .
 
 ## 👨‍💻 Author:
 Created by Paul van der Vleuten
