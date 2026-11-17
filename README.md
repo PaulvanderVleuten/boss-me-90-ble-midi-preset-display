@@ -104,17 +104,34 @@ GPIO 3  -> SEND switch (switches to GND)
 * **Performance Play:** Once synchronized, step on your ME-90 patch switches as normal during live play. The ESP32 unit will instantly intercept the wireless PC messages and refresh the high-visibility TFT screen with your custom patch name and background color. **When preselecting a patch (PREV - NEXT)** on the display or button, after **pressing SEND** the **ME-90 will follow**.
 
 ## 🛠️ Build Instructions :
-**Flash the board with the included release:  !!!! This only works with the same hardware !!!!**
-I added a release so you can flash the board directly without compiling. At  first boot you
-can calibrate the touchscreen. Once done it will boot up normally.
+
+### Flash the board with the included release:  !!!! This only works with the same hardware !!!!
+
+I added a release so you can flash the board directly without compiling.\
+At first boot follow the on-screen instructions to calibrate the touchscreen.\
+You need to calibrate only once, after a reboot (power-cycle the board) the Mainscreen pops up directly and you are ready to rock !\
+(If you need to recalibrate the touch screen, just flash the board again. And repeat the calibration.)
+
 Full instructions are in the   How to Flash.PDF   included in the release.
 
 **Or**
 
-**Compile via pioarduino:**
-**Libraries:** Some libraries need to be added via pioarduino home → Libraries, such as:  *ESP32-BLE-MIDI by Maxime (0.4.0) and NimBLE-Arduino by h2zero (2.5.2).
-**Build the Filesystem Image:** Before uploading, ensure all data files are packed into the LittleFS image by running the *Build Filesystem Image* task in pioarduino.
-**Perform a Touch calibration:** At line 89 in the source code, you will find a code block called TOUCH CALIBRATION. Change #define REPEAT_CAL false to #define REPEAT_CAL true. After uploading follow the on-screen instructions. Once calibrated change #define REPEAT_CAL back to  false and upload again. Done.
+### Compile via pioarduino
+
+**Libraries:**  
+Some libraries need to be added via **pioarduino home → Libraries**, such as:
+* `ESP32-BLE-MIDI` by Maxime (0.4.0)
+* `NimBLE-Arduino` by h2zero (2.5.2)
+
+**Build the Filesystem Image:**  
+Before uploading, ensure all data files are packed into the LittleFS image by running the *Build Filesystem Image* task in pioarduino.
+
+**Perform a Touch Calibration:**  
+After uploading, follow the on-screen instructions at first boot to calibrate the touchscreen.  
+You only need to calibrate once; after a reboot (power-cycle the board), the main screen will pop up directly.
+
+> **Note:** If you need to recalibrate the touchscreen, change `#define REPEAT_CAL false` to `#define REPEAT_CAL true` at line 91, upload, and repeat the calibration. Once calibrated, change `#define REPEAT_CAL` back to `false` and upload again.
+
 
 ## 🙏 Acknowledgments:
 A huge thank you to everyone in the PlatformIO and pioarduino communities for building and supporting the open-source ecosystem and tools that make projects like this possible.
