@@ -6,26 +6,27 @@
 [![Build Tool: pioarduino](https://shields.io)](https://github.com)
 
 
-A DIY, open-source wireless MIDI patch and preset display built on the **ESP32-S3** using **pioarduino** (the modern community fork of PlatformIO). It is tailored to display full preset names for the **BOSS ME-90**, but can easily be adapted for other guitar multi-effects processors or stompboxes.
+A DIY, open-source wireless MIDI patch and preset display built on the **ESP32-S3** using **pioarduino** (the modern community fork of PlatformIO). It is tailored to display full preset names and **patch preselection** for the **BOSS ME-90**, but can easily be adapted for other guitar multi-effects processors or stompboxes.
 
 ---
 
 ## 🎸 The Problem & The Solution
 
-The **BOSS ME-90** is an incredible processor, but its built-in 2-digit 7-segment display makes it tough to keep track of custom **preset names** on a dark stage. This project uses an **ESP32-S3** and a 3.5-inch TFT display to automatically pair wirelessly with the **BOSS BT-DUAL** adapter on the **ME-90** over Bluetooth, intercepting incoming **MIDI Program Change (PC) messages**, and instantly display high-visibility text along with custom user-assigned background colors **on a beautiful large TFT screen**.
+The **BOSS ME-90** is an incredible processor, but its built-in 2-digit 7-segment display makes it tough to keep track of custom **preset names** on a dark stage. This project uses an **ESP32-S3** and a 3.5-inch TFT display to automatically pair and *synchronize* via **NimBLE Sysex**  wirelessly with the **BOSS BT-DUAL** adapter on the **ME-90** over Bluetooth, intercepting incoming and sending outgoing **MIDI Program Change (PC) messages**. Instantly display high-visibility text along with custom user-assigned background colors **on a beautiful large TFT screen**.
 
 ### 🌟 Key Features
 * **100% Wireless Connection:** Operates via **MIDI-BLE (Bluetooth Low Energy)** with no physical cables needed.
 * **Onboard Wi-Fi Setup:** Features a built-in touch-keyboard for local network configuration.
 * **Local Web Patch Manager:** Access a browser-based local server via IP address to edit preset names instantly.
 * **Stage Color-Coding:** Color-code patches (e.g., green for rhythm, red for lead) for quick visual cues during live performance.
+* **Three button patch preselection: Preselect a patch with PREVIOUS- NEXT buttons and pusch SEND when you need it.**
 
 
 ---
 
 ## 🛠️ Project Overview & Interface
 
-Below you can see the complete system workspace configuration including the Web Manager interface alongside the physical hardware unit synchronized with the Boss ME-90 processor.
+Below you can see the complete system workspace configuration including the Web Manager interface alongside the physical hardware unit synchronized with the Boss ME-90 processor.(No hardware buttons yet, though they're in the code > see schematic.)
 
 ![System Workspace Setup](images/full-view.jpg)
 
@@ -37,7 +38,8 @@ Below you can see the complete system workspace configuration including the Web 
 * **Power:** DC/DC buck converter to drop the 9V pedalboard power adapter (Warning: Ring = positive!) down to 5V    
 * **Enclosure:** Project box enclosure (an STL file is provided in the repository for 3D printing)
 * **Connectors:** Assorted wiring, solder, and connectors as required.
-
+* **Stompbox switches.**
+![Development Board](images/ESP32-S3-DEVKITC-1-N8R8.jpg)
 ---
 
 ## 🔌 Wiring Schematic (TFT Screen & Touch Controller)
