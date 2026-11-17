@@ -113,7 +113,7 @@ Full instructions are in the   How to Flash.PDF   included in the release.
 
 **Compile via pioarduino:**
 **Libraries:** Some libraries need to be added via pioarduino home → Libraries, such as:  *ESP32-BLE-MIDI by Maxime (0.4.0) and NimBLE-Arduino by h2zero (2.5.2).
-**Build the Filesystem Image:** Before uploading, ensure all data files are packed into the LittleFS image by running the **Build Filesystem Image** task in pioarduino.
+**Build the Filesystem Image:** Before uploading, ensure all data files are packed into the LittleFS image by running the *Build Filesystem Image* task in pioarduino.
 **Perform a Touch calibration:** At line 89 in the source code, you will find a code block called TOUCH CALIBRATION. Change #define REPEAT_CAL false to #define REPEAT_CAL true. After uploading follow the on-screen instructions. Once calibrated change #define REPEAT_CAL back to  false and upload again. Done.
 
 ## 🙏 Acknowledgments:
