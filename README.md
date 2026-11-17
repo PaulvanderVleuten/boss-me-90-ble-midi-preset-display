@@ -39,9 +39,8 @@ Below you can see the complete system workspace configuration including the Web 
 * **Enclosure:** Project box enclosure (an STL file is provided in the repository for 3D printing)
 * **Connectors:** Assorted wiring, solder, and connectors as required.
 * **Stompbox switches.**
-![Development Board](images/ESP32-S3-DEVKITC-1-N8R8.jpg)
 ---
-
+![Development Board](images/ESP32-S3-DEVKITC-1-N8R8.jpg)  ![TFT screen](images/3.5-inch-TFT-SPI.jpg)
 ## 🔌 Wiring Schematic (TFT Screen & Touch Controller)
 
 ```text
