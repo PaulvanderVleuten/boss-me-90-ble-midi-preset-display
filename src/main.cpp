@@ -88,7 +88,7 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 
 //!!!!!!!!!!!!!!!!!!TOUCH CALIBRATION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define CALIBRATION_FILE "/TouchCalData"
-#define REPEAT_CAL false        // At first upload make it "true" to calibrate, when done turn it back to "false" and upload again
+#define REPEAT_CAL false        // To recalibrate make it "true" , when done turn it back to "false" and upload again.
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 /////////////// SysEx //////////////////////////////////
