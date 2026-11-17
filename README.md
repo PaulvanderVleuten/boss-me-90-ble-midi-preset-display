@@ -40,7 +40,7 @@ Below you can see the complete system workspace configuration including the Web 
 * **Connectors:** Assorted wiring, solder, and connectors as required.
 * **Stompbox switches.**
 ---
-![Development Board](images/ESP32-S3-DEVKITC-1-N8R8.jpg)  ![TFT screen](images/3.5-inch-TFT-SPI.jpg)
+&nbsp; &nbsp; ![Development Board](images/ESP32-S3-DEVKITC-1-N8R8.jpg) &nbsp; &nbsp; &nbsp; &nbsp;   ![TFT screen](images/3.5-inch-TFT-SPI.jpg)
 ## 🔌 Wiring Schematic (TFT Screen & Touch Controller)
 
 ```text
@@ -62,6 +62,9 @@ GND     -> GND
 5V      -> VCC (Do not solder jumper J1 on the screen board)
 3V3     -> LED (The LED pin controls the Q1 transistor, meaning there is zero heavy 
                 current draw here. At 3V3 the display reaches a perfect stage brightness.)
+GPIO 1  -> Previous switch (switches to GND) 
+GPIO 2  -> Next switch (switches to GND)
+GPIO 3  -> SEND switch (switches to GND)
 ```
 ---
 ![Circuit Diagram](images/external-effect-display.svg)
