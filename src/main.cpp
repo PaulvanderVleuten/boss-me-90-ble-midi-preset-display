@@ -14,42 +14,41 @@
 #include <NimBLEDevice.h>
 
 ///////////////FUNCTION PROTOTYPES////////////////////
-// MainUI
 void drawMainUI();
 void handleMainScreenTouch();
-void updateWiFiStatusLine();
+void drawBluetoothIcon(int x, int y, int w, int h, uint16_t color, uint16_t bgColor);
+void drawWifiIcon(int x, int y, uint16_t fgColor, uint16_t bgColor);
+void updateWiFiIcon();
 void loadPatchesFromFlash();
-void renderNewPatch(byte program);
+void renderNewPatch(byte program, bool isPreselected);
 void drawWordWrappedString(String text, int16_t bx, int16_t by, int16_t bw, int16_t bh, int16_t padX, int16_t padY);
-// WiFi-SetupUI
 void drawUI();
 void handleTouch();
+void updateWiFiStatusLine();
 void redrawKeyFacesOnly();
 void loadCredentials();
 void saveCredentials();
-//Touchscreen
 void touch_calibrate();
-//Webserver
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 void handleRoot();
 void savePatchesToFlash();
 
+/////////////////GPIO CONFIGURATION//////////////////////////
+#define BUTTON_PREV_PIN 1  // patch preselect Previous button
+#define BUTTON_NEXT_PIN   2  // patch preselect Next button
+#define BUTTON_SEND_PIN 3  // Send button -> send preselect patch to ME-90
 
 ////////VARIABLE DECLARATIONS///////////////////////////////
-
 TFT_eSPI tft = TFT_eSPI();
-
-bool showWifiSetupUI = false; // Global layout state tracker
+bool showWifiSetupUI = false; 
 
 #define TOTAL_PATCHES 72
-String patchNames[TOTAL_PATCHES]; // Array to hold patchnames
-uint16_t patchColors[TOTAL_PATCHES]; // Tracking array for custom background colors (defaulting to TFT_WHITE)
+String patchNames[TOTAL_PATCHES]; 
+uint16_t patchColors[TOTAL_PATCHES]; 
 
-//  WI-FI KEYBOARD UI ---
 String ssid = ""; 
 String password = "";
 bool editingPassword = false;
-
 bool isShiftActive = false;
 const int KEY_ROWS = 4;
 const int KEY_COLS = 10;
@@ -57,7 +56,7 @@ const char keys[KEY_ROWS][KEY_COLS] = {
   {'1','2','3','4','5','6','7','8','9','0'},
   {'q','w','e','r','t','y','u','i','o','p'},
   {'a','s','d','f','g','h','j','k','l','_'},
-  {'z','x','c','v','b','n','m','<',' ','^'} // '^'  = cap lock
+  {'z','x','c','v','b','n','m','<',' ','^'} 
 };
 
 int keyW = 46;       
@@ -65,180 +64,319 @@ int keyH = 42;
 int keyStartX = 10;  
 int keyStartY = 140; 
 
-Preferences preferences; //NVS flash for WiFi SSID and Password
+Preferences preferences;
 
-// MIDI
-struct MyMIDICallbacks;
-extern MyMIDICallbacks myMIDIhandler;
+// Bootup SysEx Buffer (Catch fragmented BLE SysEx packets)
+#define SYSEX_BUFFER_SIZE 512
+uint8_t* sysExBootBuffer = nullptr;
+size_t sysExBootIndex = 0;
 
+// NimBLE Remote Characteristic pointer for direct SysEx I/O
+NimBLERemoteCharacteristic* pMidiRemoteChar = nullptr;
+
+// MIDI Staging Pipeline Variables
 volatile bool newMidiMessageAvailable = false;
 volatile byte latestMidiProgram = 0;
-// BLE reconnection
+
+byte preselectedMidiProgram = 0;   // Staged index showing on screen before sending
+
 bool postSetupResetRequired = false;
 bool bleDisconnectTriggered = false;
 
 WebServer server(80);                        
 WebSocketsServer webSocket = WebSocketsServer(81); 
 
-//Touch calibration
+//!!!!!!!!!!!!!!!!!!TOUCH CALIBRATION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define CALIBRATION_FILE "/TouchCalData"
-#define REPEAT_CAL false // Set to true for calibrate or recalibrate
+#define REPEAT_CAL false        // At first upload make it "true" to calibrate, when done turn it back to "false" and upload again
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+/////////////// SysEx //////////////////////////////////
+///////////////Checksum calculation ////////////////////
+uint8_t calculateRolandChecksum(const uint8_t* address, const uint8_t* size) {
+    uint32_t sum = 0;
+    for (int i = 0; i < 4; i++) sum += address[i];
+    for (int i = 0; i < 4; i++) sum += size[i];
+    uint8_t accumulated = sum & 0x7F;
+    return (128 - accumulated) & 0x7F;
+}
+///////////////Incoming SysEx Patch ////////////////////
+void handleIncomingSysExPatch(uint8_t activePatchIndex) {
+    if (!showWifiSetupUI) {
+        latestMidiProgram = activePatchIndex;
+        newMidiMessageAvailable = true; 
+    }
+}
+// Wraps a raw SysEx array in BLE-MIDI timestamps and transmits over NimBLE
+void sendRawBleSysEx(const uint8_t* sysexData, size_t len) {
+    if (!pMidiRemoteChar || len < 2) return;
+
+    uint8_t blePacket[64];
+    if (len + 3 > sizeof(blePacket)) return;
+
+    size_t idx = 0;
+    blePacket[idx++] = 0x80; // BLE Header byte
+    blePacket[idx++] = 0x80; // Start Timestamp byte
+
+    for (size_t i = 0; i < len - 1; i++) {
+        blePacket[idx++] = sysexData[i];
+    }
+
+    blePacket[idx++] = 0x80;               // End Timestamp byte
+    blePacket[idx++] = sysexData[len - 1]; // 0xF7
+
+    if (pMidiRemoteChar->canWriteNoResponse()) {
+        pMidiRemoteChar->writeValue(blePacket, idx, false);
+    } else if (pMidiRemoteChar->canWrite()) {
+        pMidiRemoteChar->writeValue(blePacket, idx, true);
+    }
+
+  }
 
 //CUSTOM CONTROL SURFACE INTERFACE FOR BLE MIDI CLIENT (v0.4.0 API)//////////////////////////////////////////
 class BLEMIDI_ClientInterface : public MIDI_Interface {
+  private:
+    volatile bool subscribePending = false; 
   public:
     BLEMIDI_ClientInterface() : MIDI_Interface() {}
-
+    
     void begin() {
         MIDI_Interface::begin();
-
-        // Initialize the BLE stack as a Client
         BLEMidiClient.begin("ESP32-S3 Display Hub");
 
-        // Setup the Program Change handler for incoming data streams
+        // Midi Program Change listener
         BLEMidiClient.setProgramChangeCallback([](uint8_t channel, uint8_t program, uint16_t timestamp) {
             ChannelMessage msg{
                 MIDIMessageType::ProgramChange,
-                Channel(channel),  // 0-15 matching Control Surface channel profiles
-                program,           // Patch / Preset ID
+                Channel(channel),  
+                program,           
                 0, 
                 Cable(0)
             };
-            
-            // Send the parsed event straight to the display handler
             if (instance && instance->callbacks) {
                 instance->callbacks->onChannelMessage(*instance, msg);
             }
         });
 
-        // Clean up  NimBLE peer engine cache
+        //Flag asynchronously when the connection handshake executes
+        BLEMidiClient.setOnConnectCallback([]() {
+            if (instance) {
+                instance->subscribePending = true; 
+            }
+        });
         BLEMidiClient.setOnDisconnectCallback([]() {
-            // Stop background update() task to refresh layouts
             bleDisconnectTriggered = true; 
-            //clear out the dead peer reference data 
-            #ifdef NIMBLE_CPP_DISABLE_CONN_DB
-            #endif
         });
 
         instance = this;
     }
 
     void update() override {
-        if (showWifiSetupUI) return; // If  Wi-Fi setup UI is open, halt all scanning and background connections 
+        if (showWifiSetupUI) return; 
+        
+       //DIRECT NATIVE NimBLE SUBSCRIPTION 
+        if (subscribePending) {
+            subscribePending = false; 
+            delay(500); // settle time for service discovery
+            
+            // Retrieve connected peer lists directly from NimBLE core
+            std::vector<NimBLEClient*> clients = NimBLEDevice::getConnectedClients();
+            if (!clients.empty() && clients[0] != nullptr) {
+                
+                // Establish connection hook straight to standard global BLE-MIDI Service UUID
+                NimBLERemoteService* pService = clients[0]->getService("03b80e5a-ede8-4b33-a751-6ce34ec4c700"); //BLE-MIDI Service UUID
+                if (pService) {
+                    
+                    // Grab the raw BLE-MIDI characteristic descriptor notification node
+                    NimBLERemoteCharacteristic* pChar = pService->getCharacteristic("7772e5db-3868-4112-a1a9-f2669d106bf3"); //MIDI Data Characteristic UUID
+                    if (pChar && pChar->canNotify()) {
+                        pMidiRemoteChar = pChar;
+                        
+                        // Subscribe directly to the raw wireless byte chunks 
+                        pChar->subscribe(true, [](NimBLERemoteCharacteristic* /*pRemoteChar*/, uint8_t* pData, size_t length, bool /*isNotify*/) {
+                            if (length < 2) return;
+                          
+                            if (!sysExBootBuffer) return;
+                            static bool expectProgramChangeValue = false;
 
-        // clean restart scanning after a ME-90 power-down 
+                            // Parse BLE-MIDI packet (skip byte 0 which is always the BLE Header byte)
+                            for (size_t i = 1; i < length; i++) {
+                                uint8_t b = pData[i];
+
+                                //Catch normal footswitch Program Change (0xC0 on Channel 1)
+                                if (b == 0xC0) {
+                                    expectProgramChangeValue = true;
+                                    continue;
+                                }
+                                if (expectProgramChangeValue && b < 0x80) {
+                                    expectProgramChangeValue = false;
+                                    if (b < TOTAL_PATCHES) {
+                                        handleIncomingSysExPatch(b);
+                                    }
+                                    continue;
+                                }
+
+                                //Catch SysEx Start (0xF0)
+                                if (b == 0xF0) {
+                                    sysExBootIndex = 0;
+                                    sysExBootBuffer[sysExBootIndex++] = b;
+                                }
+                                //Catch SysEx End (0xF7)
+                                else if (b == 0xF7) {
+                                    if (sysExBootIndex > 0 && sysExBootIndex < SYSEX_BUFFER_SIZE) {
+                                        sysExBootBuffer[sysExBootIndex++] = b;
+                                        // Verify exact ME-90 15-byte Active Patch DT1 packet:
+                                        // F0 41 10 [01 05 03] [12] [00 00 00 00] [MSB] [LSB] [Checksum] F7
+                                        if (sysExBootIndex == 15 &&
+                                            sysExBootBuffer[1] == 0x41 &&
+                                            sysExBootBuffer[3] == 0x01 &&
+                                            sysExBootBuffer[4] == 0x05 &&
+                                            sysExBootBuffer[5] == 0x03 &&
+                                            sysExBootBuffer[6] == 0x12 &&
+                                            sysExBootBuffer[7] == 0x00 &&
+                                            sysExBootBuffer[8] == 0x00 &&
+                                            sysExBootBuffer[9] == 0x00 &&
+                                            sysExBootBuffer[10] == 0x00) {
+                                        
+                                        // Reconstruct 0-71 patch index from the two 4-bit nibbles (MSB << 4 | LSB)
+                                            uint8_t activePatchIndex = (sysExBootBuffer[11] << 4) | (sysExBootBuffer[12] & 0x0F);
+
+                                            if (activePatchIndex < TOTAL_PATCHES) {
+                                                handleIncomingSysExPatch(activePatchIndex);
+                                                }
+                                      
+                                    }
+                                }
+                                sysExBootIndex = 0;
+                              }
+                                    //Collect 7-bit SysEx payload data (ignores BLE timestamp bytes >= 0x80)
+                                    else if (b < 0x80 && sysExBootIndex > 0 && sysExBootIndex < SYSEX_BUFFER_SIZE) {
+                                    sysExBootBuffer[sysExBootIndex++] = b;
+                                    }
+                            }
+                        }, true); // True overrides the internal library listener
+
+                  
+                  // 16-byte RQ1 Query for ME-90 Active Patch Address (00 00 00 00, Size 00 00 00 02)
+                  uint8_t me90Address[4] = { 0x00, 0x00, 0x00, 0x00 };
+                  uint8_t targetSize[4]  = { 0x00, 0x00, 0x00, 0x02 };
+                  uint8_t checkSum = calculateRolandChecksum(me90Address, targetSize);
+                  uint8_t sysexRequest[] = {
+                  0xF0, 0x41, 0x10, 0x01, 0x05, 0x03, // ME-90 3-Byte Model ID (01 05 03)
+                  0x11,                               // RQ1 Data Request Command
+                  me90Address[0], me90Address[1], me90Address[2], me90Address[3],
+                  targetSize[0],  targetSize[1],  targetSize[2],  targetSize[3],
+                  checkSum, 0xF7
+                  };
+
+                  SysExMessage sysexMsg{sysexRequest, sizeof(sysexRequest), Cable(0)};
+                  instance->send(sysexMsg);
+                }
+              }
+            }
+            return;
+          }
+
         if (bleDisconnectTriggered) {
             bleDisconnectTriggered = false; 
-            // Give the radio time to dump data packets
             delay(1500); 
-            // Force the scanner sequence to re-engage instantly on the next loop execution
             return; 
         }
 
-        // If not connected automatically start a scan interval of 6 sec with a 3 sec pause ( freeup for other tasks)
-        if (!BLEMidiClient.isConnected()) {
-
-            //Display serching on mainUI
-            tft.setTextColor(TFT_RED, TFT_BLACK);
-            tft.drawString("SEARCHING", 380, 15, 2);
-            tft.drawString("ME-90 BLE ", 380, 35, 2);
+        if (!BLEMidiClient.isConnected()) {     // SEARCHING
+            drawBluetoothIcon(440, 14, 14, 28, TFT_RED, TFT_BLACK);
 
             static unsigned long lastScanTime = 0;
-            static unsigned long postSetupPauseTimer = 0; //pause start time
+            static unsigned long postSetupPauseTimer = 0; 
 
-            //force-reset the timer and reset postSetupResetRequired flag
-            if (postSetupResetRequired) {
+           if (postSetupResetRequired) {
                 postSetupResetRequired = false;  
-                postSetupPauseTimer = millis(); // Mark the time we exited the menu
-                lastScanTime = millis();        // Delay the subsequent regular 6s scans
+                postSetupPauseTimer = millis(); 
+                lastScanTime = millis();        
                 return;              
             }
 
-            // Halt scanning inside the 3-second post-setup window
-            if (millis() - postSetupPauseTimer < 3000) {
-                return; 
-            }
+            if (millis() - postSetupPauseTimer < 3000) return; 
 
-            if (millis() - lastScanTime > 6000 ) { // scan interval of 6 sec
+            if (millis() - lastScanTime > 6000 ) { 
                 lastScanTime = millis();
-               
                 int deviceCount = BLEMidiClient.scan(); 
                 int targetDeviceIndex = -1;
                 
-                for (int i = 0; i < deviceCount; i++) {  // Loop through each device to find  ME-90 adapter
+                for (int i = 0; i < deviceCount; i++) {  
                   String blename = BLEMidiClient.deviceName(i);
-                  
                   if (blename == "" || blename.length() == 0) {
                      blename = BLEMidiClient.deviceMacAddress(i); 
                   }
-                  // Find "ME-90 MIDI" or "BT-DUAL" adapter
                   if (blename.indexOf("ME-90") >= 0 || blename.indexOf("BT-DUAL") >= 0) {
-                  targetDeviceIndex = i; 
+                      targetDeviceIndex = i; 
                   }
                 }
 
-                if (deviceCount > 0) {
-                    // Fallback: If ME-90 MIDI string wasn't found, try the first found device (0)
-                   if (targetDeviceIndex != -1) {
-                    
+                if (deviceCount > 0 && targetDeviceIndex != -1) {  //CONNECTED
                     if (BLEMidiClient.connect(targetDeviceIndex)) {                         
-                        tft.fillRect(360, 5, 120, 60, TFT_BLACK); // Erase BLE conection text
-                        tft.setTextColor(TFT_GREEN, TFT_BLACK);
-                        tft.drawString("ME-90 BLE", 380, 15, 2);
-                        tft.drawString("CONNECTED", 380, 35, 2);
-
+                        tft.fillRect(435, 5, 120, 60, TFT_BLACK); 
+                        drawBluetoothIcon(440, 14, 14, 28, TFT_GREEN, TFT_BLACK);    
                     } else {                         
-                        NimBLEDevice::deleteAllBonds(); // Clears internal security key descriptors
+                        NimBLEDevice::deleteAllBonds(); 
                     }               
                 } 
-              }
             }
         }
     }
 
     void handleStall() override {}
+    void setCallbacks(MIDI_Callbacks *cb) { this->callbacks = cb; }
+    void setCallbacks(MIDI_Callbacks &cb) { this->callbacks = &cb; }
 
-   void setCallbacks(MIDI_Callbacks *cb) { this->callbacks = cb; }
-   void setCallbacks(MIDI_Callbacks &cb) { this->callbacks = &cb; }
+    // Direct interface send mechanism accessible to main loop touch thread
+    void triggerHardwareChange(uint8_t program) {
+        if (BLEMidiClient.isConnected()) {
+            BLEMidiClient.programChange(0, program);
+        }
+    }
 
-  protected:
-    // Outbound MIDI routing from  screen back to the ME-90 pedal wirelessly (option)
+ protected:
     void sendChannelMessageImpl(ChannelMessage msg) override {
         if (BLEMidiClient.isConnected() && msg.getMessageType() == MIDIMessageType::ProgramChange) {
             BLEMidiClient.programChange(msg.getChannel().getRaw(), msg.getData1());
         }
     }
-    
     void sendSysCommonImpl(SysCommonMessage msg) override {}
-    void sendSysExImpl(SysExMessage msg) override {}
+
+    // Transmits SysEx messages via direct NimBLE 
+    void sendSysExImpl(SysExMessage msg) override {
+      if (msg.data && msg.length > 0) {
+      sendRawBleSysEx(msg.data, msg.length);
+    }
+  }
+    
     void sendRealTimeImpl(RealTimeMessage msg) override {}
     void sendNowImpl() override {}
 
   private:
     MIDI_Callbacks *callbacks = nullptr;
     static BLEMIDI_ClientInterface* instance;
-    
 };
 
-BLEMIDI_ClientInterface* BLEMIDI_ClientInterface::instance = nullptr; // Define static allocation tracking pointer
-BLEMIDI_ClientInterface midi; // Instantiate the wireless interface
+BLEMIDI_ClientInterface* BLEMIDI_ClientInterface::instance = nullptr;
+BLEMIDI_ClientInterface midi;
 
 //MIDI CALLBACK COMPONENT
 struct MyMIDICallbacks : public MIDI_Callbacks {
-    void onChannelMessage(MIDI_Interface &interface, ChannelMessage message) override {
-        if (showWifiSetupUI) return; 
-
+    void onChannelMessage(MIDI_Interface & /*interface*/, ChannelMessage message) override {
+        if (showWifiSetupUI) return;
         if (message.getMessageType() == MIDIMessageType::ProgramChange && message.getChannel() == Channel(0)) {
-            // Store the data and signal the main loop
-            latestMidiProgram = message.getData1(); // Raw Progam Change (0-71)
-            newMidiMessageAvailable = true; 
+            latestMidiProgram = message.getData1();
+            newMidiMessageAvailable = true;
         }
-    }
+    } 
+void onSysExMessage(MIDI_Interface & /*interface*/, SysExMessage message) override {
+// This is Handled directly inside the NimBLE characteristic notification callback
+}   
 };
 MyMIDICallbacks myMIDIhandler; // Global instance
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 // SETUP 
 void setup() {
@@ -250,15 +388,23 @@ void setup() {
     // ==========================================
     //ssid = "YOUR WiFi SSID ";          
     //password = "YOUR WiFi PASSWORD";  
-    //saveCredentials();                // save them to Flash memory
-    //Serial.println("!!! Test credentials saved to NVS !!!");
+    //saveCredentials();                // save them to Flash memory (NVS)
     // ==========================================
 
+    // Allocate bootup  sysex buffer in RAM
+    sysExBootBuffer = (uint8_t*)malloc(SYSEX_BUFFER_SIZE);
+    if (sysExBootBuffer != nullptr) {
+    memset(sysExBootBuffer, 0, SYSEX_BUFFER_SIZE);
+    }
     
-    if (!LittleFS.begin(true)) { 
-        Serial.println("LittleFS mount failed!");
+    if (!LittleFS.begin(true)) { // check if LittleFS is loaded
         return;
     }
+
+    // INITIALIZE GPIO PINs 
+    pinMode(BUTTON_PREV_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_NEXT_PIN,   INPUT_PULLUP);
+    pinMode(BUTTON_SEND_PIN, INPUT_PULLUP);
    
     loadPatchesFromFlash(); 
 
@@ -266,10 +412,10 @@ void setup() {
     tft.setRotation(1); 
     tft.fillScreen(TFT_BLACK);
 
-    // Perform the calibration procedure
+    // Touch calibration procedure
     touch_calibrate();
 
-    // Dynamic Safe Font Extraction Fallback
+    // Font Extraction Fallback
     if (LittleFS.exists("/NotoSansJP-Bold36.vlw")) { 
         tft.loadFont("NotoSansJP-Bold36", LittleFS); 
     } else {
@@ -278,7 +424,7 @@ void setup() {
 
     loadCredentials();
      
-    // Secure Wi-Fi Connect Sequence
+    // Wi-Fi Connect Sequence
     if (ssid.length() > 0) {
         WiFi.begin(ssid.c_str(), password.c_str());
         
@@ -289,9 +435,8 @@ void setup() {
         }
     }
 
-  // Initialize mDNS responder for "me-90display.local"
-  if (!MDNS.begin("me-90display")) {
-    Serial.println("Error setting up MDNS responder!");
+  // Initialize mDNS responder for "patch.local"
+  if (!MDNS.begin("patch")) {
     return;
   }
   
@@ -305,44 +450,86 @@ void setup() {
     webSocket.onEvent(webSocketEvent);
     server.on("/", HTTP_GET, handleRoot);
     server.begin();
-
+    
     //Init BLE MIDI ---
     midi.begin(); 
     midi.setCallbacks(myMIDIhandler); 
-    Control_Surface.begin(); 
+    Control_Surface.begin();  
+    
+    
+   
+    
 }
 
 //  LOOP 
 void loop() {
     server.handleClient();
     webSocket.loop();
-
     Control_Surface.loop();
 
+    
     // Background Checking BLE MIDI for available midi
     if (newMidiMessageAvailable) {
         newMidiMessageAvailable = false; // Reset the flag immediately
-        renderNewPatch(latestMidiProgram); // Draw safely inside the main thread stack ( MIDI is Fast)
+        preselectedMidiProgram = latestMidiProgram; // Sync staged patch with ME-90 active patch!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        renderNewPatch(latestMidiProgram, false); // Draw inside the main thread stack ( MIDI is Fast)
     }
 
     //Realtime WiFi Status WATCHDOG
     static wl_status_t lastStatus = WL_IDLE_STATUS;
     wl_status_t currentStatus = WiFi.status();
     
-    
-    //Only re-render Status Line if not in setup and NOT waiting on a post-setup screen redraw
-    if (!showWifiSetupUI && !postSetupResetRequired && currentStatus != lastStatus) {
+    //Only re-render Status Line if in setup and NOT waiting on a post-setup screen redraw
+      if (showWifiSetupUI && !postSetupResetRequired && currentStatus != lastStatus) {
         lastStatus = currentStatus;
         updateWiFiStatusLine();
-    }  
+    } 
+    //Only re-render Wifi Icon if in mainUI and NOT waiting on a post-setup screen redraw
+      if (!showWifiSetupUI && !postSetupResetRequired && currentStatus != lastStatus) {
+        lastStatus = currentStatus;
+        updateWiFiIcon();
+    } 
+    
+        //HARDWARE GPIO PROCESSING 
+    if (!showWifiSetupUI) {
+        
+        // 1. Physical DOWN button click handler
+        if (digitalRead(BUTTON_PREV_PIN) == LOW) {
+            if (preselectedMidiProgram > 0) {
+                preselectedMidiProgram--;
+            } else {
+                preselectedMidiProgram = TOTAL_PATCHES - 1;
+            }
+            renderNewPatch(preselectedMidiProgram, true); 
+            delay(250); // Debounce
+        }
 
+        // 2. Physical UP button click handler
+        if (digitalRead(BUTTON_NEXT_PIN) == LOW) {
+            if (preselectedMidiProgram < TOTAL_PATCHES - 1) {
+                preselectedMidiProgram++;
+            } else {
+                preselectedMidiProgram = 0;
+            }
+            renderNewPatch(preselectedMidiProgram, true); 
+            delay(250); // Debounce
+        }
+
+        // 3. Physical SEND button click handler
+        if (digitalRead(BUTTON_SEND_PIN) == LOW) {
+            midi.triggerHardwareChange(preselectedMidiProgram);
+            latestMidiProgram = preselectedMidiProgram;
+            renderNewPatch(latestMidiProgram, false);
+            delay(300); // Debounce
+        }
+      }
   // Contextual UI Processing
     if (showWifiSetupUI) {
         handleTouch();
     } else {
         handleMainScreenTouch();
     }
-    //delay(10); 
+    
 
 }
 
@@ -350,48 +537,32 @@ void loop() {
 
 ////////////////////////////////////MainUI/////////////////////////////////////
 void drawMainUI() {
+           
   tft.fillScreen(TFT_BLACK);
+
   tft.fillRect(0, 70, 480, 180, TFT_WHITE);  // White retangle behind patchnames
-  tft.fillRect(0, 270, 480, 50, TFT_SKYBLUE);  // Skybue retangle behind Wifi Info
 
   tft.loadFont("NotoSansJP-Bold36", LittleFS);
+  
+  tft.fillRect(0, 260, 150, 60, TFT_ORANGE); tft.drawRect(0, 260, 150, 60, TFT_WHITE); 
+  tft.setTextColor(TFT_WHITE, TFT_ORANGE); tft.drawCentreString("PREV", 0 + (150/2), 274, 2); 
+  tft.fillRect(160, 260, 155, 60, TFT_DARKGREEN);  tft.drawRect(160, 260, 155, 60, TFT_WHITE);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREEN); tft.drawCentreString("SEND", 165 + (155/2), 274, 2);
+  tft.fillRect(325, 260, 155, 60, TFT_ORANGE); tft.drawRect(325, 260, 155, 60, TFT_WHITE);
+  tft.setTextColor(TFT_WHITE, TFT_ORANGE); tft.drawCentreString("NEXT", 325 + (155/2), 274, 2);
+
+  
   tft.setTextColor(TFT_RED, TFT_BLACK); 
-  tft.drawString("PATCH: ", 100, 20);
-   tft.unloadFont();
-  
-  // Bottom Status bar & setup toggle
-  tft.loadFont("NotoSansJP-Bold18", LittleFS);
-  tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-  tft.drawString("WIFI", 30, 286);
-  
-  updateWiFiStatusLine(); // WiFi connection statusbar update
+  tft.drawString("PATCH: ", 80, 20);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("---", 250, 20); // Display --- until ME-90 responds on boot
+ 
+  tft.unloadFont();
 
-  // WiFi Setup Button
-  tft.loadFont("NotoSansJP-Bold18", LittleFS);
-  tft.drawSmoothRoundRect(340, 278, 13, 11, 120, 32, TFT_BLUE, TFT_BLACK); 
-  tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-  tft.drawCentreString("Setup", 340 + (120 / 2), 286, 2);
-  tft.unloadFont();
-}
-  
-// WiFi connection statusbar update function
-void updateWiFiStatusLine() {
-  tft.loadFont("NotoSansJP-Bold18", LittleFS);
-  tft.fillRect(110, 270, 210, 50, TFT_SKYBLUE);
-  if (WiFi.status() == WL_CONNECTED) {
-    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-    String ipStr = "IP: " + WiFi.localIP().toString();
-    tft.drawString(ipStr, 110, 286);
-  } else if (WiFi.status() == WL_DISCONNECTED && ssid.length() > 0) {
-    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-    tft.drawString("Connecting...", 110, 286);
-  } else {
-    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-    tft.drawString("Not Connected", 110, 286);
-  }
-  tft.unloadFont();
+updateWiFiIcon();
 }
 
+  
 // Load Patches from flash
 void loadPatchesFromFlash() { 
   File file = LittleFS.open("/patches.txt", FILE_READ); 
@@ -423,7 +594,7 @@ void loadPatchesFromFlash() {
 }
 
 // New Patchname rendering
-void renderNewPatch(byte program) {
+void renderNewPatch(byte program, bool isPreselected) {  
     char prefix = 'U';
     int bankNum = 0;
     int patchNum = 0;
@@ -455,10 +626,28 @@ void renderNewPatch(byte program) {
     snprintf(displayBuffer, sizeof(displayBuffer), "%c%d-%d", prefix, bankNum, patchNum);
     
     tft.loadFont("NotoSansJP-Bold36", LittleFS);
-    tft.setTextColor(TFT_RED, TFT_BLACK); 
-    tft.drawString("PATCH: ", 100, 20);
+
+    // Change label header text color and send button color based on staging state tracking
+    tft.fillRect(0, 0, 250, 65, TFT_BLACK);
+    if (isPreselected) {
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+    tft.drawString("STAGED: ", 80, 20);
+
+    tft.fillRect(160, 260, 155, 60, TFT_RED);  //send button
+    tft.drawRect(160, 260, 155, 60, TFT_WHITE);
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    tft.drawCentreString("SEND", 165 + (155/2), 274, 2);
+    } else {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("PATCH:  ", 80, 20);
+
+    tft.fillRect(160, 260, 155, 60, TFT_DARKGREEN); //send button
+    tft.drawRect(160, 260, 155, 60, TFT_WHITE);
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.drawCentreString("SEND", 165 + (155/2), 274, 2);
+    }
     
-    tft.fillRect(230, 0, 250, 70, TFT_BLACK);  
+    tft.fillRect(230, 0, 145, 70, TFT_BLACK);  
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.drawString(displayBuffer, 250, 20);
 
@@ -477,63 +666,30 @@ void renderNewPatch(byte program) {
     int16_t boxHeight = 180;
 
     drawWordWrappedString(currentName, boxX, boxY, boxWidth, boxHeight, xPadding, yPadding); //WORD-WRAP
- 
     tft.unloadFont(); 
+   
 }
 
-// Word-wrap for patchnames on TFT Display Left align
-/*
-void drawWordWrappedString(String text, int16_t bx, int16_t by, int16_t bw, int16_t bh, int16_t padX, int16_t padY) {
-  
-  int16_t startX = bx + padX; // starting bounds with padding
-  int16_t cursorX = startX;
-  int16_t cursorY = by + padY;
-  
-  int16_t fontHeight = tft.fontHeight(); 
-  int16_t maxX = bx + bw - padX;          // Maximum right-hand pixel boundary 
-  int16_t maxY = by + bh - fontHeight;    // Maximum bottom line boundary 
-  
-  int startIndex = 0;
-  int endIndex = text.indexOf(' ');
-  
-  while (startIndex < text.length()) {
-    String word;   //Extract the next word
-    if (endIndex == -1) {
-      word = text.substring(startIndex);
-      startIndex = text.length(); // End loop after this word
-    } else {
-      word = text.substring(startIndex, endIndex);
-      startIndex = endIndex + 1;
-      endIndex = text.indexOf(' ', startIndex);
-    }
-    
-    if (startIndex < text.length()) {  // Add space back to the word unless it's the very last word
-      word += " ";
-    }
-    
-    int16_t wordWidth = tft.textWidth(word); //Calculate word width in the current custom font
-    
-    if (cursorX + wordWidth > maxX) {  //if the word overflows the right margin
-      cursorX = startX;      // Reset back to X = 10 (bx + padX)
-      cursorY += fontHeight; // Advance down exactly one font line
-    }
-    
-    if (cursorY > maxY) {  // If the new line overflows the bottom of the rectangle
-      break; // Stop printing -> avoid drawing outside the box
-    }
-    
-    tft.setCursor(cursorX, cursorY);  //Draw the word
-    tft.print(word);
-    
-    cursorX += wordWidth;  // Move cursor forward for the next word
-  }
+// Bluetooth icon  (x, y, w, h)       //( w recommended: 10-14  h recommended: 18-24)
+void drawBluetoothIcon(int x, int y, int w, int h, uint16_t color, uint16_t bgColor) {
+  int cx = x + (w / 2);       // Center X (vertical spine)
+  int q1 = y + (h / 4);       // Top triangle tip Y
+  int q3 = y + (3 * h / 4);   // Bottom triangle tip Y
+  int rightX = x + w;         // Rightmost point X
+  int leftX = x;              // Leftmost point X
+  float width = 3.0;          // 3.0px stroke width 
+
+  tft.drawWideLine(cx, y, cx, y + h, width, color, bgColor); //Vertical center spine
+  tft.drawWideLine(cx, y, rightX, q1, width, color, bgColor);  //Top-right loop
+  tft.drawWideLine(rightX, q1, leftX, q3, width, color, bgColor);
+  tft.drawWideLine(leftX, q1, rightX, q3, width, color, bgColor); //Bottom-right loop
+  tft.drawWideLine(rightX, q3, cx, y + h, width, color, bgColor);
 }
-*/
+
 // Word-wrap for patchnames on TFT Display Center align
 void drawWordWrappedString(String text, int16_t bx, int16_t by, int16_t bw, int16_t bh, int16_t padX, int16_t padY) {
   int16_t fontHeight = tft.fontHeight(); 
   int16_t maxX = bw - (padX * 2); // Max available width inside padding boundaries
-  
   
   // A Bold56 font inside a 180px box can only hold ~2 to 3 lines max
   const int maxLines = 10; // Arrays to temporarily store our parsed lines
@@ -609,14 +765,55 @@ void drawWordWrappedString(String text, int16_t bx, int16_t by, int16_t bw, int1
 void handleMainScreenTouch() {
     uint16_t t_x = 0, t_y = 0;
     if (tft.getTouch(&t_x, &t_y)) {
-        // "WiFi Setup" button area 
-        if (t_x >= 340 && t_x <= 460 && t_y >= 278 && t_y <= 310) {
+        // WiFi Setup area 
+        if (t_x >= 370 && t_x <= 480 && t_y >= 0 && t_y <= 80) {
             showWifiSetupUI = true;
             editingPassword = false;
             drawUI(); 
-            delay(300); 
+            delay(300);
+            
+            return;  
         }
-    }
+        // Preselect buttons
+        // PREVIOUS BUTTON 
+       if (t_x >= 0 && t_x <= 150 && t_y >= 260 && t_y <= 320) 
+       {
+        if (preselectedMidiProgram > 0) {
+        preselectedMidiProgram--;
+        } else {
+        preselectedMidiProgram = TOTAL_PATCHES - 1; // Loop true start
+        }
+        renderNewPatch(preselectedMidiProgram, true); // True stages the patch layout
+        delay(250); // anti-bounce protection
+        return;
+        }
+
+        // NEXT patch BUTTON 
+        if (t_x >= 325 && t_x <= 480 && t_y >= 260 && t_y <= 320) 
+        {
+        if (preselectedMidiProgram < TOTAL_PATCHES - 1) {
+        preselectedMidiProgram++;
+        } else {
+        preselectedMidiProgram = 0; // Loop back down to first index    
+        }
+        renderNewPatch(preselectedMidiProgram, true);
+        delay(250);
+        return;
+        }
+
+        // SEND BUTTON 
+        if (t_x >= 160 && t_x <= 315 && t_y >= 260 && t_y <= 320)  
+        {
+        // Instantly transmit the staged selection straight down the BLE pipeline
+        midi.triggerHardwareChange(preselectedMidiProgram);
+        // Sync current active position tracking marker
+        latestMidiProgram = preselectedMidiProgram;
+        renderNewPatch(latestMidiProgram, false); // Switch back to active red theme layout
+        delay(300);
+        return;
+        }
+         
+      }
 }
 
 
@@ -624,23 +821,32 @@ void handleMainScreenTouch() {
 
 void drawUI() {  
   tft.fillScreen(TFT_SKYBLUE);
-  tft.loadFont("NotoSansJP-Bold18", LittleFS);
+  tft.loadFont("NotoSansJP-Bold14", LittleFS);
   tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-  tft.drawString("Wi-Fi Setup", 190, 10);
+  tft.drawString("(patch.local)", 195, 15);
+  tft.unloadFont();
+  tft.loadFont("NotoSansJP-Bold18", LittleFS);
 
   // Field boxes
-  tft.drawRect(10, 40, 460, 35, editingPassword ? TFT_BLACK : TFT_BLUE);
-  tft.drawString("SSID: " + ssid, 15, 48);
+  tft.drawRect(10, 50, 460, 35, editingPassword ? TFT_BLACK : TFT_RED);
+  tft.fillRect(11, 51, 458, 33, TFT_LIGHTGREY);
+  tft.drawString("SSID: " + ssid, 20, 58);
 
-  tft.drawRect(10, 85, 460, 35, editingPassword ? TFT_BLUE : TFT_BLACK);
-  tft.drawString("PASS: " + (editingPassword ? password : "*****"), 15, 93);
+  tft.drawRect(10, 95, 460, 35, editingPassword ? TFT_RED : TFT_BLACK);
+  tft.fillRect(11, 96, 458, 33, TFT_LIGHTGREY);
+  tft.drawString("PASS: " + (editingPassword ? password : "*****"), 20, 103);
 
-  // OK Button ( x: 350-> 430, y: 5-> 35)
-  tft.drawRect(350, 5, 80, 30, TFT_BLACK);
-  tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
-  tft.drawCentreString("OK", 350 + (80 / 2), 10, 2);
+  // TEST Button
+  tft.drawRect(300, 10, 80, 30, TFT_BLACK);
+  tft.fillRect(301, 11, 78, 28, TFT_LIGHTGREY);
+  tft.setTextColor(TFT_BLACK, TFT_SKYBLUE);
+  tft.drawCentreString("Check", 300 + (80 / 2), 15, 2);
 
-
+  // OK Button
+  tft.drawRect(390, 10, 80, 30, TFT_BLACK);
+  tft.fillRect(391, 11, 78, 28, TFT_LIGHTGREY);
+  // Text OK string handled by updateWiFiStatusLine()
+  
 // Key matrix frame construction
   for (int r = 0; r < KEY_ROWS; r++) {
     for (int c = 0; c < KEY_COLS; c++) {
@@ -702,6 +908,8 @@ void redrawKeyFacesOnly() {
     }
   }
   tft.unloadFont();
+
+  updateWiFiStatusLine(); // WiFi connection statusbar update
 }
 
 // Handling WiFi Setup UI Toughscreen
@@ -709,8 +917,17 @@ void handleTouch() {
   uint16_t t_x = 0, t_y = 0;
   if (!tft.getTouch(&t_x, &t_y)) return;
 
+  // Check Button
+  if (t_x >= 300 && t_x <= 380 && t_y >= 10 && t_y <= 40) { 
+          saveCredentials();
+          WiFi.disconnect(true);
+          delay(100);
+          WiFi.begin(ssid.c_str(), password.c_str());
+          
+  }
+
   // OK Button -> Submit & exit
-  if (t_x >= 350 && t_x <= 430 && t_y >= 5 && t_y <= 35) { 
+  if (t_x >= 390 && t_x <= 470 && t_y >= 10 && t_y <= 40) { 
           saveCredentials();
           WiFi.disconnect(true);
           delay(100);
@@ -721,18 +938,22 @@ void handleTouch() {
           if (!BLEMidiClient.isConnected()) {
               postSetupResetRequired = true;
               drawMainUI(); 
-          } else {
+          } else if (BLEMidiClient.isConnected()) {    
               drawMainUI();
+              drawBluetoothIcon(440, 14, 14, 28, TFT_GREEN, TFT_BLACK);
+             // renderNewPatch(latestMidiProgram,preselectedMidiProgram);
+              renderNewPatch(latestMidiProgram, latestMidiProgram != preselectedMidiProgram);
+
           }
-          
+        
           delay(300);
           return; 
   }
 
   // Header Box Field Swaps (Requires full redraw because borders swap colors)
   if (t_x >= 10 && t_x <= 470) {
-    if (t_y >= 40 && t_y <= 75)  { editingPassword = false; drawUI(); delay(200); return; }
-    if (t_y >= 85 && t_y <= 120) { editingPassword = true;  drawUI(); delay(200); return; }
+    if (t_y >= 45 && t_y <= 80)  { editingPassword = false; drawUI(); delay(200); return; }
+    if (t_y >= 90 && t_y <= 125) { editingPassword = true;  drawUI(); delay(200); return; }
   }
 
   // Keyboard array mapping
@@ -764,11 +985,11 @@ void handleTouch() {
         tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
 
         if (!editingPassword) {
-          tft.fillRect(11, 41, 458, 33, TFT_SKYBLUE); 
-          tft.drawString("SSID: " + ssid, 15, 48);
+          tft.fillRect(11, 51, 458, 33, TFT_LIGHTGREY); 
+          tft.drawString("SSID: " + ssid, 20, 58);
         } else {
-          tft.fillRect(11, 86, 458, 33, TFT_SKYBLUE); 
-          tft.drawString("PASS: " + password, 15, 93); 
+          tft.fillRect(11, 96, 458, 33, TFT_LIGHTGREY); 
+          tft.drawString("PASS: " + password, 20, 103); 
         }
         tft.unloadFont();
 
@@ -777,6 +998,52 @@ void handleTouch() {
       }
     }
   }
+}
+
+// WiFi connection statusbar update function
+void updateWiFiStatusLine() {
+  tft.loadFont("NotoSansJP-Bold18", LittleFS);
+  tft.fillRect(10, 10, 180, 35, TFT_SKYBLUE);
+  if (WiFi.status() == WL_CONNECTED) {
+    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
+    String ipStr = "IP: " + WiFi.localIP().toString();
+    tft.drawString(ipStr, 20, 15);
+     tft.fillRect(391, 11, 78, 28, TFT_LIGHTGREY);
+    tft.setTextColor(TFT_DARKGREEN, TFT_LIGHTGREY);
+    tft.drawCentreString("OK", 390 + (80 / 2), 15, 2);
+
+  } else if (WiFi.status() == WL_DISCONNECTED && ssid.length() > 0) {
+    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
+    tft.drawString("Connecting...", 20, 15);
+     tft.fillRect(391, 11, 78, 28, TFT_LIGHTGREY);
+     tft.setTextColor(TFT_RED, TFT_LIGHTGREY);
+     tft.drawCentreString("OK", 390 + (80 / 2), 15, 2);
+  } else {
+    tft.setTextColor(TFT_BLUE, TFT_SKYBLUE);
+    tft.drawString("Not Connected", 20, 15);
+    tft.fillRect(391, 11, 78, 28, TFT_LIGHTGREY);
+    tft.setTextColor(TFT_RED, TFT_LIGHTGREY);
+    tft.drawCentreString("OK", 390 + (80 / 2), 15, 2);
+  }
+  tft.unloadFont();
+}
+
+// Wifi connection Icon update function
+void updateWiFiIcon() {
+  if (WiFi.status() == WL_CONNECTED) {
+    drawWifiIcon(400, 35, TFT_GREEN, TFT_BLACK);
+  } else if (WiFi.status() == WL_DISCONNECTED){
+    drawWifiIcon(400, 35, TFT_RED, TFT_BLACK);
+  }
+}
+
+// Wi-Fi icon 
+void drawWifiIcon(int x, int y,  uint16_t fgColor,  uint16_t bgColor) {
+  
+  tft.fillSmoothCircle(x, y, 2, fgColor, bgColor);
+  tft.drawSmoothArc(x, y, 7, 5, 135, 225, fgColor, bgColor, true);
+  tft.drawSmoothArc(x, y, 12, 10, 135, 225, fgColor, bgColor, true);
+  tft.drawSmoothArc(x, y, 17, 15, 135, 225, fgColor, bgColor, true);
 }
 
 //NVS flash for WiFi SSID and Password save and load
@@ -838,8 +1105,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
        case WStype_CONNECTED:
             {
                 IPAddress ip = webSocket.remoteIP(num);
-                Serial.printf("[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
-                
                 // Construct sync payload string: "INIT_NAMES:Name1|#color1,Name2|#color2..."
                 String fullList = "INIT_NAMES:";
                 for(int i = 0; i < TOTAL_PATCHES; i++) {
@@ -858,7 +1123,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
                 payload[length] = '\0';
                 String text = String((char*)payload);
                 text.trim();
-                //Serial.println("Received WS payload: " + text);
 
                 if (text.startsWith("UPDATE_PATCH|")) {
                     // format: UPDATE_PATCH|index|New Name|#HexColor
@@ -962,3 +1226,5 @@ void touch_calibrate() {
     tft.fillScreen(TFT_BLACK);
   }
 }
+
+
