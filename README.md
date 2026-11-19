@@ -1,6 +1,6 @@
 # BOSS ME-90 Wireless BLE-MIDI Patch & Preset Display
 
-👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com)**
+👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com/PaulvanderVleuten/boss-me-90-ble-midi-preset-display)**
 
 [![License: MIT](https://shields.io)](https://opensource.org)  
 [![Platform: ESP32](https://shields.io)](https://espressif.com)  
@@ -106,7 +106,7 @@ GPIO 3  -> SEND switch (switches to GND)
 
 ## 🛠️ Build Instructions :
 
-👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com)**
+👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com/PaulvanderVleuten/boss-me-90-ble-midi-preset-display)**
 
 
 ### Flash the board with the included release:  !!!! This only works with the same hardware !!!!
