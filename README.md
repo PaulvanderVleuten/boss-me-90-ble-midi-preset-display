@@ -1,5 +1,6 @@
 # BOSS ME-90 Wireless BLE-MIDI Patch & Preset Display
 
+👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com)**
 
 [![License: MIT](https://shields.io)](https://opensource.org)  
 [![Platform: ESP32](https://shields.io)](https://espressif.com)  
@@ -104,6 +105,9 @@ GPIO 3  -> SEND switch (switches to GND)
 * **Performance Play:** Once synchronized, step on your ME-90 patch switches as normal during live play. The ESP32 unit will instantly intercept the wireless PC messages and refresh the high-visibility TFT screen with your custom patch name and background color. **When preselecting a patch (PREV - NEXT)** on the display or button, after **pressing SEND** the **ME-90 will follow**.
 
 ## 🛠️ Build Instructions :
+
+👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com)**
+
 
 ### Flash the board with the included release:  !!!! This only works with the same hardware !!!!
 
