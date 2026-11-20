@@ -109,14 +109,14 @@ GPIO 3  -> SEND switch (switches to GND)
 👉 **[View Source Code, Wiring Diagram & Releases on GitHub](https://github.com/PaulvanderVleuten/boss-me-90-ble-midi-preset-display)**
 
 
-### Flash the board with the included release:  !!!! This only works with the same hardware !!!!
+### Flash the board with the included release: 
+> **Board Compatibility Note:** You can normally flash this precompiled release onto any **ESP32-S3-WROOM-1 N8R8 or N16R8** development board (such as standard 44-pin DevKitC-1 clones or YD-ESP32-S3 boards), provided you connect the wires to the **exact GPIO numbers** rather than matching physical pin positions. *(Note: This has only been personally tested on the official ESP32-S3-DevKitC-1 N8R8; other compatible boards are untested.)*
 
-I added a release so you can flash the board directly without compiling.\
-At first boot follow the on-screen instructions to calibrate the touchscreen.\
-You need to calibrate only once, after a reboot (power-cycle the board) the Mainscreen pops up directly and you are ready to rock !\
-(If you need to recalibrate the touch screen, just flash the board again. And repeat the calibration.)
+Follow the full flashing instructions in the **`How to Flash.PDF`** included in the release.
 
-Full instructions are in the   How to Flash.PDF   included in the release.
+* At first boot, follow the on-screen instructions to calibrate the touchscreen.
+* You only need to calibrate once—after a reboot (power-cycle the board), the main screen pops up directly and you are ready to rock!
+* *(If you ever need to recalibrate the touchscreen, just flash the board again and repeat the calibration.)*
 
 **Or**
 
